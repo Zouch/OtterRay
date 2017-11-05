@@ -1,10 +1,13 @@
 use std::fs::File;
 use std::io::BufWriter;
+use std::os::raw::c_void;
 
 use math::Color;
 
 extern crate png;
 use self::png::HasParameters;
+
+use utils::*;
 
 pub struct Image {
     pub width: u32,
@@ -57,5 +60,9 @@ impl Image {
         assert!(i < self.width && j < self.height);
         let pixel = (i + j * self.width) as usize;
         self.data[pixel] = color;
+    }
+
+    pub fn data(&self) -> *const c_void {
+        vec_void_ptr(&self.data)
     }
 }

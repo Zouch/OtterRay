@@ -13,7 +13,7 @@ pub struct Intersection {
     t: f32,
     position: Vector3,
     normal: Vector3,
-    material_index: u32,
+    material: Material,
     is_valid: bool
 }
 
@@ -23,7 +23,7 @@ impl Intersection {
             t: f32::MAX,
             position: Vector3::new(0.0, 0.0, 0.0),
             normal: Vector3::new(0.0, 0.0, 0.0),
-            material_index: 0,
+            material: Material::new(Color::BLACK),
             is_valid: false,
         }
     }
@@ -56,23 +56,23 @@ impl Sphere {
     }
 }
 
-#[derive(Clone)]
-pub struct Object {
-    geometry: Box<Intersectable>,
-    material_index: u32,
-}
-impl Object {
-    pub fn new(geometry: Box<Intersectable>, idx: u32) -> Object {
-        Object {
-            geometry: geometry,
-            material_index: idx,
-        }
-    }
+#[derive(Clone, Copy)]
+pub struct Material {
+    albedo: Color,
 }
 
 #[derive(Clone)]
-pub struct Material {
-    albedo: Color,
+pub struct Object {
+    geometry: Box<Intersectable>,
+    material: Material,
+}
+impl Object {
+    pub fn new(geometry: Box<Intersectable>, material: Material) -> Object {
+        Object {
+            geometry: geometry,
+            material: material,
+        }
+    }
 }
 
 impl Material {
@@ -86,7 +86,6 @@ impl Material {
 #[derive(Clone)]
 pub struct World {
     objects: Vec<Object>,
-    materials: Vec<Material>,
     camera: Camera,
 }
 
@@ -153,7 +152,7 @@ impl Intersectable for World {
             let intersection = object.geometry.intersect(ray);
             if intersection.is_valid && intersection.t < result.t {
                 result = intersection;
-                result.material_index = object.material_index;
+                result.material = object.material;
             }
         }
 
@@ -168,35 +167,37 @@ impl Intersectable for World {
 }
 
 impl World {
-    pub fn new(objects: Vec<Object>, materials: Vec<Material>, camera: Camera) -> World {
+    pub fn new(objects: Vec<Object>, camera: Camera) -> World {
         World {
             objects: objects,
-            materials: materials,
             camera: camera,
         }
     }
 
     fn cast_ray(&self, ray: Ray) -> Color {
         let intersection = self.intersect(ray);
-        let albedo = self.materials[intersection.material_index as usize].albedo;
 
-        let mut result = albedo;
-
-        let light_pos = Vector3::new(0.0, 0.0, 10.0);
+        let result: Color;
+        let light_pos = Vector3::new(0.0, 0.0, 0.0);
 
         if intersection.is_valid {
-            let shadow_ray = Ray::new(intersection.position, light_pos - intersection.position);
+            let light_vec = light_pos - intersection.position;
+            let light_vec_length = length(light_vec);
+
+            let shadow_ray = Ray::new(intersection.position, light_vec);
             let test = self.intersect(shadow_ray);
 
-            if !test.is_valid {
+            if !test.is_valid || test.t > light_vec_length {
                 let n = safe_normalize(intersection.normal);
-                let v = safe_normalize(light_pos - intersection.position);
+                let v = light_vec / light_vec_length;
                 let ndotl = saturate(dot(n, v));
 
-                result = albedo * ndotl;
+                result = (intersection.material.albedo * ndotl) / 3.1415957;
             } else {
                 result = Color::BLACK;
             }
+        } else {
+            result = Color::grey(0.2);
         }
 
         return result;
@@ -204,24 +205,27 @@ impl World {
 
     pub fn raytrace(&self, image: &Image, sender: Sender<(u32, u32, Color)>) {
 
+        let width = image.width;
         let height = image.height;
-        let slices = 32;
+        let x_slices = 2;
+        let y_slices = 2;
 
-        for i in 0..slices {
-            let beg = i * (height / slices);
-            let end = (i + 1) * (height / slices);
-            self.spawn_thread(&sender, beg, end, image);
-        }
+        for i in 0..x_slices {
+            let x_beg = i * (width / x_slices);
+            let x_end = (i + 1) * (width / x_slices);
 
-        if height % slices != 0 {
-            let beg = (height / slices) * slices;
-            let end = height;
-            self.spawn_thread(&sender, beg, end, image);
+            for j in 0..y_slices {
+                let y_beg = j * (height / y_slices);
+                let y_end = (j + 1) * (height / y_slices);
+
+                self.spawn_thread(&sender, x_beg, x_end, y_beg, y_end, image);
+            }
         }
     }
 
     fn spawn_thread(&self, sender: &Sender<(u32, u32, Color)>,
-                    slice_begin: u32, slice_end: u32, image: &Image)
+                    x_slice_begin: u32, x_slice_end: u32,
+                    y_slice_begin: u32, y_slice_end: u32, image: &Image)
     {
         let world = self.clone();
         let s = sender.clone();
@@ -231,12 +235,15 @@ impl World {
         let samples = image.samples;
 
         thread::spawn(move || {
-            world.raytrace_sub(s, slice_begin, slice_end, width, height, samples);
+            world.raytrace_sub(s, x_slice_begin, x_slice_end,
+                               y_slice_begin, y_slice_end,
+                               width, height, samples);
         });
     }
 
     fn raytrace_sub(&self, sender: Sender<(u32, u32, Color)>,
-                    slice_begin: u32, slice_end: u32,
+                    x_slice_begin: u32, x_slice_end: u32,
+                    y_slice_begin: u32, y_slice_end: u32,
                     width: u32, height: u32, samples: u32) {
 
         let inv_image_width = 1.0 / width as f32;
@@ -245,8 +252,8 @@ impl World {
         let between = Range::new(0.0, 1.0);
         let mut rng = rand::thread_rng();
 
-        for y in slice_begin..slice_end {
-            for x in 0..width {
+        for y in y_slice_begin..y_slice_end {
+            for x in x_slice_begin..x_slice_end {
 
                 let mut color = Color::BLACK;
                 for _s in 0..samples {
