@@ -10,6 +10,7 @@ use std::ffi::CString;
 use rand::distributions::{IndependentSample, Range};
 
 use glutin::GlContext;
+use glutin::dpi::*;
 
 mod math;
 use math::*;
@@ -126,7 +127,7 @@ fn main()
     let mut events_loop = glutin::EventsLoop::new();
     let window = glutin::WindowBuilder::new()
         .with_title("Hello, World")
-        .with_dimensions(image.width, image.height);
+        .with_dimensions(LogicalSize::from( (image.width, image.height) ));
     let context = glutin::ContextBuilder::new()
         .with_vsync(true);
 
@@ -236,8 +237,8 @@ fn main()
         events_loop.poll_events(|event| {
             match event {
                 glutin::Event::WindowEvent{ event, .. } => match event {
-                    glutin::WindowEvent::Closed => running = false,
-                    glutin::WindowEvent::Resized(w, h) => gl_window.resize(w, h),
+                    glutin::WindowEvent::CloseRequested => running = false,
+                    glutin::WindowEvent::Resized(logical) => gl_window.resize( logical.to_physical(gl_window.get_hidpi_factor()) ),
                     _ => ()
                 },
                 _ => ()
